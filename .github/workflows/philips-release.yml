@@ -1,0 +1,130 @@
+name: Fork release
+
+on:
+  push:
+    tags:
+      - 'upstream-v*'
+      - 'philips-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. upstream-v7.6.0 or philips-v7.6.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Build and test
+        working-directory: lambdas
+        run: yarn install --frozen-lockfile && yarn run test && yarn dist
+
+      - name: Extract version and type from tag
+        id: version
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "$tag" == upstream-v* ]]; then
+            version="${tag#upstream-v}"
+            type="upstream"
+          elif [[ "$tag" == philips-v* ]]; then
+            version="${tag#philips-v}"
+            type="philips"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "type=${type}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TYPE: ${{ steps.version.outputs.type }}
+        run: |
+          if [ "$TYPE" = "upstream" ]; then
+            notes="Upstream tracking release for v${VERSION}.
+
+          Built from \`main\` (exact mirror of upstream). Contains no Philips-specific changes."
+          else
+            notes="Philips fork release based on upstream v${VERSION}.
+
+          Built from the \`philips\` branch. May contain upstream-bound fixes not yet in an upstream release."
+          fi
+
+          notes="${notes}
+
+          ## Verification
+          \`\`\`bash
+          gh attestation verify <artifact> --repo ${{ github.repository }}
+          \`\`\`"
+
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes "${notes}"
+
+      - name: Upload Lambda zips
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          for f in $(find lambdas/functions -name '*.zip'); do
+            gh release upload "${TAG}" "$f"
+          done
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: '${{ github.workspace }}/lambdas/functions/**/*.zip'
+
+      - name: Attach attestation bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ATTESTATION_ID: ${{ steps.attest.outputs.attestation-id }}
+        run: |
+          SIGSTORE_BUNDLE="${RUNNER_TEMP}/philips-forks-terraform-aws-github-runner-attestation-${ATTESTATION_ID}.sigstore"
+          INTOTO_BUNDLE="${RUNNER_TEMP}/philips-forks-terraform-aws-github-runner-attestation-${ATTESTATION_ID}.intoto.jsonl"
+          mv "${ATTESTATION_BUNDLE}" "${SIGSTORE_BUNDLE}"
+          if [ -z "${SIGSTORE_BUNDLE}" ]; then
+            echo "No attestation bundle found, skipping."
+            exit 0
+          fi
+          gh release upload "${TAG}" "${SIGSTORE_BUNDLE}"
+          cat "${SIGSTORE_BUNDLE}" | jq -r '.dsseEnvelope | select(.payloadType == "application/vnd.in-toto+json").payload' | base64 -d | jq . > "${INTOTO_BUNDLE}"
+          gh release upload "${TAG}" "${INTOTO_BUNDLE}"
+
+
