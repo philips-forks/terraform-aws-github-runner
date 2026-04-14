@@ -36,4 +36,4 @@ Never create tags in the upstream `vX.Y.Z` format on this fork.
 
 ## Skills
 
-Use `/sync-upstream`, `/philips-release`, `/urgent-fix`, `/upstream-pr-merged`, or `/monthly-hygiene` in Copilot chat for step-by-step procedures.
+Use `/sync-upstream`, `/philips-release`, `/urgent-fix`, `/adopt-upstream-pr`, `/upstream-pr-merged`, or `/monthly-hygiene` in Copilot chat for step-by-step procedures.
