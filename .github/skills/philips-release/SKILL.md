@@ -1,19 +1,28 @@
 ---
 name: philips-release
-description: 'Create a Philips fork release. Use when: tagging a new philips-vX.Y.Z release, publishing Lambda zips and Terraform module to Artifactory, releasing after an urgent fix, releasing after upstream version bump.'
+description: 'Create a Philips fork release. Use when: tagging a new philips-vX.Y.Z release, publishing Lambda zips, releasing after an urgent fix, releasing after upstream version bump.'
 ---
 
 # Philips Release
 
 Tag and publish a release from the `philips` branch.
 
-## When to Use
+## Release Types
 
-- After syncing with a new upstream release to create a matching `philips-vX.Y.Z`
+There are two types of fork releases:
+
+- **`upstream-vX.Y.Z`** — Clean tracking release. Created **automatically** by the sync workflow when a new upstream release tag is detected. Points to the same commit as `vX.Y.Z` on `main`. No manual action needed.
+- **`philips-vX.Y.Z`** — Manual hotfix release. Created by a maintainer when the `philips` branch contains upstream-bound fixes that need to ship before the next upstream release.
+
+Both trigger the same `philips-release.yml` workflow → build, GitHub Release, attestation. No Artifactory publish step is needed; consumers source the Terraform module directly from this GitHub repo and Lambda zips from GitHub Releases.
+
+## When to Use This Skill
+
 - After merging an urgent fix into `philips` that needs immediate deployment
-- After cleaning up upstream-bound commits (re-releasing on the same upstream base)
+- After cleaning up upstream-bound commits and needing a re-release
+- **Not** for upstream tracking releases — those are auto-created by the sync workflow
 
-## Procedure
+## Procedure (manual `philips-v*` release)
 
 1. Ensure `philips` is up-to-date and rebased on `main`:
    ```bash
@@ -21,7 +30,7 @@ Tag and publish a release from the `philips` branch.
    git checkout philips
    git log --oneline origin/main..philips
    ```
-   Verify the commit list looks correct.
+   Verify the commit list looks correct — should include infrastructure commits plus the hotfix(es).
 
 2. Determine the upstream version that `main` is based on:
    ```bash
@@ -35,12 +44,11 @@ Tag and publish a release from the `philips` branch.
    git push origin philips-v7.5.0
    ```
 
-4. The `philips-release.yml` workflow triggers automatically and will:
+4. The release workflow triggers automatically and will:
    - Build all Lambda zips (`yarn install --frozen-lockfile && yarn test && yarn dist`)
    - Create a GitHub Release with the tag
    - Upload Lambda assets: `runners.zip`, `webhook.zip`, `ami-housekeeper.zip`, `termination-watcher.zip`, `runner-binaries-syncer.tar.gz`
    - Generate sigstore attestation for all artifacts
-   - Publish the Terraform module to Artifactory (`dl-innersource-terraform-local`)
 
 5. Verify the release:
    ```bash
@@ -50,6 +58,10 @@ Tag and publish a release from the `philips` branch.
 
 ## Tag Naming
 
-- Always use `philips-vX.Y.Z` where `X.Y.Z` matches the upstream version `main` is based on
-- Never use the upstream `vX.Y.Z` format
-- If releasing a patch on the same upstream base (e.g. second fix on top of `v7.5.0`), increment the patch: `philips-v7.5.0`, `philips-v7.5.0-1`, etc. (needs team decision on convention)
+| Prefix | Source | Created by | Contains Philips patches? |
+|--------|--------|------------|---------------------------|
+| `upstream-vX.Y.Z` | `main` (same commit as upstream `vX.Y.Z`) | Sync workflow (auto) | No |
+| `philips-vX.Y.Z` | `philips` branch HEAD | Maintainer (manual) | Yes |
+
+- Never create tags in the upstream `vX.Y.Z` format on this fork
+- `upstream-v*` tags always point to `main`; `philips-v*` tags always point to `philips`
