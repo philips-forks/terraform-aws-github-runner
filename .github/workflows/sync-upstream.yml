@@ -1,0 +1,141 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync-main:
+    name: Sync main from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+
+      - name: Sync main with upstream
+        run: |
+          git remote add upstream https://github.com/github-aws-runners/terraform-aws-github-runner.git
+          git fetch upstream main --tags
+          git reset --hard upstream/main
+          git push origin main --force
+          # Sync upstream version tags (v*) to the fork
+          git push origin --tags --force
+
+  rebase-philips:
+    name: Rebase philips onto main
+    needs: sync-main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: philips
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebase philips onto main
+        id: rebase
+        run: |
+          git fetch origin main
+          if git rebase origin/main; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push rebased philips
+        if: steps.rebase.outputs.result == 'success'
+        run: git push origin philips --force-with-lease
+
+      - name: Detect new upstream releases
+        if: steps.rebase.outputs.result == 'success'
+        id: new-releases
+        run: |
+          # Get all upstream version tags (v*) that don't have a corresponding upstream-v* tag
+          new_tags=""
+          for tag in $(git tag -l 'v[0-9]*' --sort=-version:refname); do
+            if ! git tag -l "upstream-${tag}" | grep -q .; then
+              new_tags="${new_tags}${tag}\n"
+            fi
+          done
+
+          if [ -n "$new_tags" ]; then
+            # Take only the latest new upstream release
+            latest=$(echo -e "$new_tags" | head -1)
+            echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Detected new upstream release: ${latest}"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No new upstream releases detected"
+          fi
+
+      - name: Tag new upstream tracking release
+        if: steps.rebase.outputs.result == 'success' && steps.new-releases.outputs.found == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.new-releases.outputs.latest }}
+        run: |
+          upstream_tag="upstream-${UPSTREAM_TAG}"
+          # Tag the same commit as the upstream release (on main, not philips)
+          echo "Creating tag ${upstream_tag} at ${UPSTREAM_TAG}"
+          git tag "${upstream_tag}" "${UPSTREAM_TAG}"
+          git push origin "${upstream_tag}"
+
+      - name: Trigger release workflow
+        if: steps.rebase.outputs.result == 'success' && steps.new-releases.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+          UPSTREAM_TAG: ${{ steps.new-releases.outputs.latest }}
+        run: |
+          gh workflow run philips-release.yml \
+            --repo "${{ github.repository }}" \
+            --ref philips \
+            --field "tag=upstream-${UPSTREAM_TAG}"
+
+      - name: Open issue on conflict
+        if: steps.rebase.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Rebase conflict: philips onto main ($(date -u +%Y-%m-%d))" \
+            --label "rebase-conflict" \
+            --body "The automated rebase of \`philips\` onto \`main\` failed due to conflicts.
+
+          **Action required:** A maintainer must resolve this manually.
+
+          \`\`\`bash
+          git fetch origin
+          git checkout philips
+          git rebase origin/main
+          # Resolve conflicts file by file
+          git rebase --continue
+          git push origin philips --force-with-lease
+          \`\`\`
+
+          Use \`/sync-upstream\` in Copilot chat for the full resolution procedure.
+
+          Triggered by: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
