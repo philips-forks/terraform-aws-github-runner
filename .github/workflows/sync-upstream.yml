@@ -2,7 +2,8 @@ name: Sync upstream
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 5 * * *'   # ~7 AM Amsterdam (CEST) / 6 AM (CET)
+    - cron: '0 22 * * *'  # ~midnight Amsterdam (CEST) / 11 PM (CET)
   workflow_dispatch:
 
 permissions:
@@ -19,11 +20,18 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Sync main with upstream
         run: |
@@ -44,11 +52,18 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: philips
           fetch-depth: 0
-          token: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure git
         run: |
@@ -74,12 +89,32 @@ jobs:
         if: steps.rebase.outputs.result == 'success'
         id: new-releases
         run: |
-          # Get all upstream version tags (v*) that don't have a corresponding upstream-v* tag
+          # Find the latest existing upstream-v* tag to use as a baseline
+          latest_existing=$(git tag -l 'upstream-v[0-9]*' --sort=-version:refname | head -1 | sed 's/^upstream-//')
+
+          if [ -n "$latest_existing" ]; then
+            echo "Latest existing upstream tracking tag: upstream-${latest_existing}"
+          else
+            echo "No existing upstream tracking tags found — will tag only the latest upstream release"
+          fi
+
+          # Find upstream v* tags that are newer than our latest upstream-v* tag
           new_tags=""
           for tag in $(git tag -l 'v[0-9]*' --sort=-version:refname); do
-            if ! git tag -l "upstream-${tag}" | grep -q .; then
-              new_tags="${new_tags}${tag}\n"
+            # Skip if we already have an upstream-v* for this version
+            if git tag -l "upstream-${tag}" | grep -q .; then
+              continue
             fi
+
+            # Skip if this tag is older than or equal to our latest tracked version
+            if [ -n "$latest_existing" ]; then
+              if [ "$(printf '%s\n%s' "$tag" "$latest_existing" | sort -V | tail -1)" = "$latest_existing" ]; then
+                echo "Skipping ${tag} (older than or equal to ${latest_existing})"
+                continue
+              fi
+            fi
+
+            new_tags="${new_tags}${tag}\n"
           done
 
           if [ -n "$new_tags" ]; then
@@ -107,7 +142,7 @@ jobs:
       - name: Trigger release workflow
         if: steps.rebase.outputs.result == 'success' && steps.new-releases.outputs.found == 'true'
         env:
-          GH_TOKEN: ${{ secrets.SYNC_TOKEN_GITHUB_FG_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM_TAG: ${{ steps.new-releases.outputs.latest }}
         run: |
           gh workflow run philips-release.yml \

@@ -1,3 +1,9 @@
+# Philips Fork — terraform-aws-github-runner
+
+> **This is an internal Philips fork of [github-aws-runners/terraform-aws-github-runner](https://github.com/github-aws-runners/terraform-aws-github-runner).** It exists to allow early deployment of fixes and features before they land in an upstream release. We do not provide support for external users — please direct all questions and issues to the [upstream repository](https://github.com/github-aws-runners/terraform-aws-github-runner/issues).
+
+---
+
 # Terraform module Self-Hosted Scalable GitHub Actions runners on AWS.
 
 [![docs](https://img.shields.io/badge/docs-runners-blue.svg)](https://github-aws-runners.github.io/terraform-aws-github-runner) [![awesome-runners](https://img.shields.io/badge/listed%20on-awesome--runners-blue.svg)](https://github.com/jonico/awesome-runners) [![Terraform registry](https://img.shields.io/github/v/release/github-aws-runners/terraform-aws-github-runner?label=Terraform%20Registry)](https://registry.terraform.io/modules/github-aws-runners/github-runner/aws/) [![Terraform checks](https://github.com/github-aws-runners/terraform-aws-github-runner/actions/workflows/terraform.yml/badge.svg)](https://github.com/github-aws-runners/terraform-aws-github-runner/actions/workflows/terraform.yml) [![Lambdas](https://github.com/github-aws-runners/terraform-aws-github-runner/actions/workflows/lambda.yml/badge.svg)](https://github.com/github-aws-runners/terraform-aws-github-runner/actions/workflows/lambda.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/github-aws-runners/terraform-aws-github-runner/badge)](https://scorecard.dev/viewer/?uri=github.com/github-aws-runners/terraform-aws-github-runner) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/10905/badge)](https://www.bestpractices.dev/projects/10905)
