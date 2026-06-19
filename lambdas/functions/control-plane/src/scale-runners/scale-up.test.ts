@@ -1,3 +1,4 @@
+import { DescribeLaunchTemplateVersionsCommand, EC2Client } from '@aws-sdk/client-ec2';
 import { PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { mockClient } from 'aws-sdk-client-mock';
 import 'aws-sdk-client-mock-jest/vitest';
@@ -32,6 +33,7 @@ const mockOctokit = {
 
 const mockCreateRunner = vi.mocked(createRunner);
 const mockListRunners = vi.mocked(listEC2Runners);
+const mockEC2Client = mockClient(EC2Client);
 const mockSSMClient = mockClient(SSMClient);
 const mockSSMgetParameter = vi.mocked(getParameter);
 const mockPublishRetryMessage = vi.mocked(publishRetryMessage);
@@ -141,6 +143,22 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   setDefaults();
+
+  mockEC2Client.reset();
+  mockEC2Client.on(DescribeLaunchTemplateVersionsCommand).resolves({
+    LaunchTemplateVersions: [
+      {
+        LaunchTemplateData: {
+          BlockDeviceMappings: [
+            {
+              DeviceName: '/dev/sda1',
+              Ebs: {},
+            },
+          ],
+        },
+      },
+    ],
+  });
 
   defaultSSMGetParameterMockImpl();
   defaultOctokitMockImpl();
@@ -645,6 +663,86 @@ describe('scaleUp with GHES', () => {
         expect.objectContaining({
           ec2instanceCriteria: expect.objectContaining({
             instanceTypes: ['t3.medium', 't3.large'],
+          }),
+        }),
+      );
+    });
+
+    it('loads the launch template block device name for dynamic EBS labels without DeviceName', async () => {
+      mockEC2Client.on(DescribeLaunchTemplateVersionsCommand).resolves({
+        LaunchTemplateVersions: [
+          {
+            LaunchTemplateData: {
+              BlockDeviceMappings: [
+                {
+                  DeviceName: '/dev/sdb',
+                  VirtualName: 'ephemeral0',
+                },
+                {
+                  DeviceName: '/dev/sdf',
+                  Ebs: {},
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      const testDataWithEbsLabels = [
+        {
+          ...TEST_DATA_SINGLE,
+          labels: ['ghr-ec2-ebs-volume-size:100', 'ghr-ec2-ebs-volume-type:gp3'],
+          messageId: 'test-ebs-device-name',
+        },
+      ];
+
+      await scaleUpModule.scaleUp(testDataWithEbsLabels);
+
+      expect(mockEC2Client).toHaveReceivedCommandWith(DescribeLaunchTemplateVersionsCommand, {
+        LaunchTemplateName: 'lt-1',
+        Versions: ['$Default'],
+      });
+      expect(createRunner).toBeCalledWith(
+        expect.objectContaining({
+          ec2OverrideConfig: expect.objectContaining({
+            BlockDeviceMappings: [
+              {
+                DeviceName: '/dev/sdf',
+                Ebs: {
+                  VolumeSize: 100,
+                  VolumeType: 'gp3',
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('does not load launch template block device name when DeviceName is provided by labels', async () => {
+      const testDataWithEbsLabels = [
+        {
+          ...TEST_DATA_SINGLE,
+          labels: ['ghr-ec2-block-device-name:/dev/sdg', 'ghr-ec2-ebs-volume-size:100', 'ghr-ec2-ebs-volume-type:gp3'],
+          messageId: 'test-explicit-ebs-device-name',
+        },
+      ];
+
+      await scaleUpModule.scaleUp(testDataWithEbsLabels);
+
+      expect(mockEC2Client).not.toHaveReceivedCommand(DescribeLaunchTemplateVersionsCommand);
+      expect(createRunner).toBeCalledWith(
+        expect.objectContaining({
+          ec2OverrideConfig: expect.objectContaining({
+            BlockDeviceMappings: [
+              {
+                DeviceName: '/dev/sdg',
+                Ebs: {
+                  VolumeSize: 100,
+                  VolumeType: 'gp3',
+                },
+              },
+            ],
           }),
         }),
       );
@@ -2553,9 +2651,14 @@ describe('parseEc2OverrideConfig', () => {
   });
 
   describe('Placement', () => {
-    it('should parse placement-group label', () => {
-      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-placement-group:my-placement-group']);
+    it('should parse placement-group-name label', () => {
+      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-placement-group-name:my-placement-group']);
       expect(result?.Placement?.GroupName).toBe('my-placement-group');
+    });
+
+    it('should parse placement-group-id label', () => {
+      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-placement-group-id:pg-1234567890abcdef0']);
+      expect(result?.Placement?.GroupId).toBe('pg-1234567890abcdef0');
     });
 
     it('should parse placement-tenancy label', () => {
@@ -2583,6 +2686,11 @@ describe('parseEc2OverrideConfig', () => {
       expect(result?.Placement?.AvailabilityZone).toBe('us-west-2b');
     });
 
+    it('should parse placement-availability-zone-id label', () => {
+      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-placement-availability-zone-id:use1-az1']);
+      expect(result?.Placement?.AvailabilityZoneId).toBe('use1-az1');
+    });
+
     it('should parse placement-spread-domain label', () => {
       const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-placement-spread-domain:my-spread-domain']);
       expect(result?.Placement?.SpreadDomain).toBe('my-spread-domain');
@@ -2599,7 +2707,7 @@ describe('parseEc2OverrideConfig', () => {
 
     it('should parse multiple placement labels', () => {
       const result = scaleUpModule.parseEc2OverrideConfig([
-        'ghr-ec2-placement-group:group-1',
+        'ghr-ec2-placement-group-name:group-1',
         'ghr-ec2-placement-tenancy:dedicated',
         'ghr-ec2-placement-availability-zone:us-east-1b',
       ]);
@@ -2610,6 +2718,17 @@ describe('parseEc2OverrideConfig', () => {
   });
 
   describe('Block Device Mappings', () => {
+    it('should parse block-device-name label', () => {
+      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-block-device-name:/dev/sdg']);
+      expect(result?.BlockDeviceMappings?.[0]?.DeviceName).toBe('/dev/sdg');
+    });
+
+    it('should use default block device name when provided', () => {
+      const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-ebs-volume-size:100'], '/dev/sda1');
+      expect(result?.BlockDeviceMappings?.[0]?.DeviceName).toBe('/dev/sda1');
+      expect(result?.BlockDeviceMappings?.[0]?.Ebs?.VolumeSize).toBe(100);
+    });
+
     it('should parse ebs-volume-size label as number', () => {
       const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-ebs-volume-size:100']);
       expect(result?.BlockDeviceMappings?.[0]?.Ebs?.VolumeSize).toBe(100);
@@ -2690,7 +2809,6 @@ describe('parseEc2OverrideConfig', () => {
     it('should initialize BlockDeviceMappings when not present', () => {
       const result = scaleUpModule.parseEc2OverrideConfig(['ghr-ec2-ebs-volume-size:50']);
       expect(result?.BlockDeviceMappings).toBeDefined();
-      // expect(result?.BlockDeviceMappings?.[0]?.DeviceName).toBe('/dev/sda1');
     });
   });
 
@@ -3106,7 +3224,7 @@ describe('parseEc2OverrideConfig', () => {
         'ghr-ec2-max-price:0.75',
         'ghr-ec2-priority:1',
         // Placement
-        'ghr-ec2-placement-group:my-group',
+        'ghr-ec2-placement-group-name:my-group',
         'ghr-ec2-placement-tenancy:dedicated',
         // Block Device
         'ghr-ec2-ebs-volume-size:200',
