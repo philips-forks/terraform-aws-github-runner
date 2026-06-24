@@ -613,7 +613,6 @@ describe('scaleUp with GHES', () => {
   describe('Dynamic EC2 Configuration', () => {
     beforeEach(() => {
       process.env.ENABLE_ORGANIZATION_RUNNERS = 'true';
-      process.env.ENABLE_DYNAMIC_LABELS = 'true';
       process.env.ENABLE_EPHEMERAL_RUNNERS = 'true';
       process.env.ENABLE_JOB_QUEUED_CHECK = 'false';
       process.env.RUNNER_LABELS = 'base-label';
@@ -779,29 +778,6 @@ describe('scaleUp with GHES', () => {
 
       await scaleUpModule.scaleUp(testDataWithEmptyLabels);
 
-      expect(createRunner).toBeCalledWith(
-        expect.objectContaining({
-          ec2instanceCriteria: expect.objectContaining({
-            instanceTypes: ['t3.medium', 't3.large'],
-          }),
-        }),
-      );
-    });
-
-    it('does not process EC2 labels when ENABLE_DYNAMIC_LABELS is disabled', async () => {
-      process.env.ENABLE_DYNAMIC_LABELS = 'false';
-
-      const testDataWithEc2Labels = [
-        {
-          ...TEST_DATA_SINGLE,
-          labels: ['ghr-ec2-instance-type:c5.4xlarge'],
-          messageId: 'test-7',
-        },
-      ];
-
-      await scaleUpModule.scaleUp(testDataWithEc2Labels);
-
-      // Should ignore EC2 labels and use default instance types
       expect(createRunner).toBeCalledWith(
         expect.objectContaining({
           ec2instanceCriteria: expect.objectContaining({
