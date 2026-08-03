@@ -3,7 +3,7 @@ import { resolveRunnerProviderType } from '@aws-github-runner/runner-provider';
 import { Octokit } from '@octokit/rest';
 import yn from 'yn';
 
-import { createGithubAppAuth, createGithubInstallationAuth, createOctokitClient } from '../github/auth';
+import { createGithubAppAuth, createGithubInstallationAuth, createOctokitClient, getStoredInstallationId } from '../github/auth';
 import { createScaleUpRunnerProvider } from '../runner-provider-registry';
 import {
   getGitHubEnterpriseApiUrl,

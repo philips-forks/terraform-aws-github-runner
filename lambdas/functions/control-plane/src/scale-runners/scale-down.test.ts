@@ -39,6 +39,7 @@ describe('When runners are sorted', () => {
     expect(runners[2].instanceId).toEqual('2');
     expect(runners[3].instanceId).toEqual('3');
   });
+  });
 
   it('Should sort runners ascending for eviction strategy newest first te keep oldest.', () => {
     runners.sort(newestFirstStrategy);
@@ -99,5 +100,29 @@ describe('When runners are sorted', () => {
     expect(runnersTest[0].launchTime).toBeUndefined();
     expect(runnersTest[1].launchTime).toBeDefined();
     expect(runnersTest[2].launchTime).not.toBeDefined();
+  });
+
+  describe('Multi-app round-robin', () => {
+    it('passes the same appIndex to createGithubInstallationAuth', async () => {
+      mockedAppAuth.mockResolvedValue({
+        type: 'app',
+        token: 'token',
+        appId: 42,
+        expiresAt: 'some-date',
+        appIndex: 1,
+      });
+
+      const runners = [createRunnerTestData('idle-1', 'Org', MINIMUM_TIME_RUNNING_IN_MINUTES + 1, true, false, true)];
+      mockGitHubRunners(runners);
+      mockAwsRunners(runners);
+
+      await scaleDown();
+
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        1, // appIndex must match the one from createGithubAppAuth
+      );
+    });
   });
 });

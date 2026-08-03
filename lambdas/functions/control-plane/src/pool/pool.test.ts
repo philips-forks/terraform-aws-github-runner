@@ -35,6 +35,7 @@ vi.mock('./../github/auth', async () => ({
   createGithubAppAuth: vi.fn(),
   createGithubInstallationAuth: vi.fn(),
   createOctokitClient: vi.fn(),
+  getStoredInstallationId: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../scale-runners/ec2', async (importOriginal) => ({
@@ -175,6 +176,7 @@ beforeEach(() => {
     token: 'token',
     appId: 1,
     expiresAt: 'some-date',
+    appIndex: 0,
   });
   mockedInstallationAuth.mockResolvedValue({
     type: 'token',
@@ -207,6 +209,7 @@ describe('Test simple pool.', () => {
         1,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
 
@@ -324,6 +327,7 @@ describe('Test simple pool.', () => {
         3,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
   });
@@ -345,6 +349,7 @@ describe('Test simple pool.', () => {
         3,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
   });
@@ -401,6 +406,7 @@ describe('Test simple pool.', () => {
         1,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
   });
@@ -438,6 +444,7 @@ describe('Test simple pool.', () => {
         2,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
 
@@ -452,6 +459,7 @@ describe('Test simple pool.', () => {
         1,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
 
@@ -465,6 +473,7 @@ describe('Test simple pool.', () => {
         8,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
       );
     });
   });
@@ -489,6 +498,70 @@ describe('Test simple pool.', () => {
         2,
         expect.anything(),
         'pool-lambda',
+        expect.any(Number),
+      );
+    });
+  });
+
+  describe('Multi-app round-robin', () => {
+    beforeEach(() => {
+      (getGitHubEnterpriseApiUrl as ReturnType<typeof vi.fn>).mockReturnValue({
+        ghesApiUrl: '',
+        ghesBaseUrl: '',
+      });
+    });
+
+    it('passes the same appIndex to createGithubInstallationAuth', async () => {
+      mockedAppAuth.mockResolvedValue({
+        type: 'app',
+        token: 'token',
+        appId: 42,
+        expiresAt: 'some-date',
+        appIndex: 1,
+      });
+
+      await adjust({ poolSize: 3 });
+
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(String),
+        1, // appIndex must match the one from createGithubAppAuth
+      );
+    });
+
+    it('looks up installationId using the selected app JWT', async () => {
+      mockedAppAuth.mockResolvedValue({
+        type: 'app',
+        token: 'app-token-for-selected-app',
+        appId: 42,
+        expiresAt: 'some-date',
+        appIndex: 1,
+      });
+
+      await adjust({ poolSize: 3 });
+
+      // Should look up installationId via the API
+      expect(mockOctokit.apps.getOrgInstallation).toHaveBeenCalledWith({ org: ORG });
+    });
+
+    it('passes appIndex to createRunners so rate-limit metrics are attributed to the correct app', async () => {
+      mockedAppAuth.mockResolvedValue({
+        type: 'app',
+        token: 'token',
+        appId: 42,
+        expiresAt: 'some-date',
+        appIndex: 2,
+      });
+
+      await adjust({ poolSize: 3 });
+
+      expect(createRunners).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.any(Number),
+        expect.anything(),
+        'pool-lambda',
+        2, // appIndex must match the one returned by createGithubAppAuth
       );
     });
   });
