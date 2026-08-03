@@ -18,6 +18,7 @@ export interface CreatePoolRunnersInput {
   githubRunnerConfig: CreateGitHubRunnerConfig;
   numberOfRunners: number;
   githubInstallationClient: Octokit;
+  appIdx?: number;
 }
 
 export interface PoolRunnerProvider<TRunner = unknown> extends RunnerProvider {
