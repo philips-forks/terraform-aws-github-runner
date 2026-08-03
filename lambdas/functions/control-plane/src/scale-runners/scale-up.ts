@@ -38,11 +38,12 @@ async function createGithubInstallationClient(
   enableOrgLevel: boolean,
   payload: ActionRequestMessage,
   ghesApiUrl: string,
+  appIndex: number,
 ): Promise<Octokit> {
   let installationId = await getInstallationId(githubAppClient, enableOrgLevel, payload);
 
   try {
-    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl);
+    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl, appIndex);
     return await createOctokitClient(ghAuth.token, ghesApiUrl);
   } catch (error) {
     if (payload.installationId === 0 || getErrorStatus(error) !== 404) {
@@ -61,7 +62,7 @@ async function createGithubInstallationClient(
       repositoryName: payload.repositoryName,
     });
 
-    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl);
+    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl, appIndex);
     return await createOctokitClient(ghAuth.token, ghesApiUrl);
   }
 }
@@ -154,6 +155,7 @@ export async function scaleUp(payloads: ActionRequestMessageSQS[]): Promise<stri
         enableOrgLevel,
         payload,
         ghesApiUrl,
+        ghAuth.appIndex,
       );
 
       entry = {
