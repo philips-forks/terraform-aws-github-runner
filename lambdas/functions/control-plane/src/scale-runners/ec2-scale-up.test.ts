@@ -64,6 +64,7 @@ vi.mock('./../github/auth', async () => ({
   createGithubAppAuth: vi.fn(),
   createGithubInstallationAuth: vi.fn(),
   createOctokitClient: vi.fn(),
+  getStoredInstallationId: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@aws-github-runner/aws-ssm-util', async () => {
@@ -189,6 +190,7 @@ beforeEach(() => {
     type: 'app',
     token: 'token',
     appId: TEST_DATA_SINGLE.installationId,
+    appIndex: 0,
     expiresAt: 'some-date',
   });
   mockedInstallationAuth.mockResolvedValue({
@@ -1506,11 +1508,11 @@ describe('scaleUp with GHES', () => {
       await scaleUpModule.scaleUp(messages);
 
       expect(mockCreateClient).toHaveBeenCalledTimes(3); // 1 app client, 2 repo installation clients
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, 'https://github.enterprise.something/api/v3');
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, 'https://github.enterprise.something/api/v3');
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, 'https://github.enterprise.something/api/v3', 0);
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, 'https://github.enterprise.something/api/v3', 0);
     });
 
-    it('Should resolve installation again when event installation belongs to another app', async () => {
+    it('Should resolve installation via API when payload installationId is 0 (belongs to another app)', async () => {
       mockOctokit.apps.getOrgInstallation.mockReset();
       mockOctokit.apps.getOrgInstallation.mockImplementation(() => ({
         data: {
@@ -1518,26 +1520,13 @@ describe('scaleUp with GHES', () => {
         },
       }));
 
-      mockedInstallationAuth.mockRejectedValueOnce({ status: 404 }).mockResolvedValueOnce({
-        type: 'token',
-        tokenType: 'installation',
-        token: 'token',
-        createdAt: 'some-date',
-        expiresAt: 'some-date',
-        permissions: {},
-        repositorySelection: 'all',
-        installationId: 123,
-      });
+      const messages = createTestMessages(1, [{ installationId: 0 }]);
 
-      await scaleUpModule.scaleUp(TEST_DATA);
+      await scaleUpModule.scaleUp(messages);
 
+      // When installationId is 0 (or belongs to another app), resolveInstallationId is called
       expect(mockOctokit.apps.getOrgInstallation).toHaveBeenCalledWith({ org: TEST_DATA_SINGLE.repositoryOwner });
-      expect(mockedInstallationAuth).toHaveBeenNthCalledWith(
-        1,
-        TEST_DATA_SINGLE.installationId,
-        'https://github.enterprise.something/api/v3',
-      );
-      expect(mockedInstallationAuth).toHaveBeenNthCalledWith(2, 123, 'https://github.enterprise.something/api/v3');
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(123, 'https://github.enterprise.something/api/v3', 0);
     });
 
     it('Should reuse GitHub clients for same installation', async () => {
@@ -2019,8 +2008,8 @@ describe('scaleUp with public GH', () => {
       await scaleUpModule.scaleUp(messages);
 
       expect(mockCreateClient).toHaveBeenCalledTimes(3); // 1 app client, 2 repo installation clients
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, '');
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, '');
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, '', 0);
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, '', 0);
     });
 
     it('Should reuse GitHub clients for same installation', async () => {
@@ -2545,8 +2534,8 @@ describe('scaleUp with Github Data Residency', () => {
       await scaleUpModule.scaleUp(messages);
 
       expect(mockCreateClient).toHaveBeenCalledTimes(3); // 1 app client, 2 repo installation clients
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, '');
-      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, '');
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(100, '', 0);
+      expect(mockedInstallationAuth).toHaveBeenCalledWith(200, '', 0);
     });
 
     it('Should reuse GitHub clients for same installation', async () => {

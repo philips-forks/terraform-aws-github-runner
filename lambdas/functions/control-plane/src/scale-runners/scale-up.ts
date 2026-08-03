@@ -7,7 +7,6 @@ import { createGithubAppAuth, createGithubInstallationAuth, createOctokitClient,
 import { createScaleUpRunnerProvider } from '../runner-provider-registry';
 import {
   getGitHubEnterpriseApiUrl,
-  getInstallationId,
   resolveInstallationId,
   isJobQueued,
   UnsupportedEventError,
@@ -24,15 +23,6 @@ import type {
 
 const logger = createChildLogger('scale-up');
 
-function getErrorStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) {
-    return undefined;
-  }
-
-  const errorWithStatus = error as { status?: number; response?: { status?: number } };
-  return errorWithStatus.status ?? errorWithStatus.response?.status;
-}
-
 async function createGithubInstallationClient(
   githubAppClient: Octokit,
   enableOrgLevel: boolean,
@@ -40,31 +30,21 @@ async function createGithubInstallationClient(
   ghesApiUrl: string,
   appIndex: number,
 ): Promise<Octokit> {
-  let installationId = await getInstallationId(githubAppClient, enableOrgLevel, payload);
+  // Use pre-stored installation ID when available (avoids an API call)
+  let installationId = await getStoredInstallationId(appIndex);
 
-  try {
-    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl, appIndex);
-    return await createOctokitClient(ghAuth.token, ghesApiUrl);
-  } catch (error) {
-    if (payload.installationId === 0 || getErrorStatus(error) !== 404) {
-      throw error;
+  if (installationId === undefined) {
+    // The primary app (index 0) can reuse the webhook payload's installation ID since
+    // the webhook is delivered by the primary app. Additional apps must resolve their own.
+    if (appIndex === 0 && payload.installationId !== 0) {
+      installationId = payload.installationId;
+    } else {
+      installationId = await resolveInstallationId(githubAppClient, enableOrgLevel, payload);
     }
-
-    installationId = await resolveInstallationId(githubAppClient, enableOrgLevel, payload);
-    if (installationId === payload.installationId) {
-      throw error;
-    }
-
-    logger.warn('Retrying GitHub installation auth with installation resolved for current app', {
-      eventInstallationId: payload.installationId,
-      resolvedInstallationId: installationId,
-      repositoryOwner: payload.repositoryOwner,
-      repositoryName: payload.repositoryName,
-    });
-
-    const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl, appIndex);
-    return await createOctokitClient(ghAuth.token, ghesApiUrl);
   }
+
+  const ghAuth = await createGithubInstallationAuth(installationId, ghesApiUrl, appIndex);
+  return await createOctokitClient(ghAuth.token, ghesApiUrl);
 }
 
 export async function scaleUp(payloads: ActionRequestMessageSQS[]): Promise<string[]> {

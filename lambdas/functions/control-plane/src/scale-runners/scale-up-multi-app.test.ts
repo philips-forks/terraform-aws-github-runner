@@ -1,5 +1,6 @@
 import * as ghAuth from '../github/auth';
 import * as scaleUpModule from './scale-up';
+import * as githubRunner from './github-runner';
 import type { ActionRequestMessageSQS } from './types';
 import { beforeEach, describe, expect, it, vi, Mock } from 'vitest';
 
@@ -12,7 +13,6 @@ vi.mock('../github/auth', () => ({
 
 vi.mock('./github-runner', () => ({
   getGitHubEnterpriseApiUrl: vi.fn().mockReturnValue({ ghesApiUrl: '', ghesBaseUrl: undefined }),
-  getInstallationId: vi.fn().mockImplementation(async (_client, _org, payload) => payload.installationId),
   resolveInstallationId: vi.fn(),
   isJobQueued: vi.fn().mockResolvedValue(true),
   UnsupportedEventError: class UnsupportedEventError extends Error {},
@@ -59,6 +59,8 @@ vi.mock('@aws-github-runner/runner-provider', () => ({
 const mockedAppAuth = vi.mocked(ghAuth.createGithubAppAuth);
 const mockedInstallationAuth = vi.mocked(ghAuth.createGithubInstallationAuth);
 const mockedOctokitClient = vi.mocked(ghAuth.createOctokitClient);
+const mockedGetStoredInstallationId = vi.mocked(ghAuth.getStoredInstallationId);
+const mockedResolveInstallationId = vi.mocked(githubRunner.resolveInstallationId);
 
 describe('multi-app: installation auth must use the same appIndex as app auth', () => {
   const payload: ActionRequestMessageSQS[] = [
@@ -94,8 +96,7 @@ describe('multi-app: installation auth must use the same appIndex as app auth', 
     } as unknown as import('@octokit/rest').Octokit);
   });
 
-  it('passes appIndex from createGithubAppAuth to createGithubInstallationAuth', async () => {
-    // Simulate multi-app: app auth randomly selects the additional app (index 1)
+  it('uses stored installation ID and correct appIndex for additional app (index 1)', async () => {
     mockedAppAuth.mockResolvedValue({
       token: 'app-jwt-token',
       appIndex: 1,
@@ -103,11 +104,14 @@ describe('multi-app: installation auth must use the same appIndex as app auth', 
       expiresAt: '',
     } as ReturnType<typeof ghAuth.createGithubAppAuth> extends Promise<infer T> ? T : never);
 
+    // The stored installation ID for app 1 — avoids using the webhook payload's ID
+    mockedGetStoredInstallationId.mockResolvedValue(150968403);
+
     mockedInstallationAuth.mockResolvedValue({
       token: 'installation-token',
       type: 'token',
       tokenType: 'installation',
-      installationId: 36190402,
+      installationId: 150968403,
       expiresAt: new Date().toISOString(),
       permissions: {},
       repositorySelection: 'all',
@@ -115,17 +119,51 @@ describe('multi-app: installation auth must use the same appIndex as app auth', 
 
     await scaleUpModule.scaleUp(payload);
 
-    // The critical assertion: createGithubInstallationAuth must be called with
-    // the same appIndex (1) that createGithubAppAuth returned, ensuring the
-    // same app's credentials are used to create the installation token.
+    // Must use the stored installation ID for app 1, NOT the webhook payload's ID
+    expect(mockedGetStoredInstallationId).toHaveBeenCalledWith(1);
     expect(mockedInstallationAuth).toHaveBeenCalledWith(
-      36190402, // installationId from payload
-      '',       // ghesApiUrl
-      1,        // appIndex — MUST match createGithubAppAuth's returned appIndex
+      150968403, // stored installation ID for app 1
+      '',
+      1,         // appIndex
+    );
+    // Should NOT call resolveInstallationId since stored ID was available
+    expect(mockedResolveInstallationId).not.toHaveBeenCalled();
+  });
+
+  it('resolves installation ID via API when no stored ID exists for additional app', async () => {
+    mockedAppAuth.mockResolvedValue({
+      token: 'app-jwt-token',
+      appIndex: 1,
+      type: 'app',
+      expiresAt: '',
+    } as ReturnType<typeof ghAuth.createGithubAppAuth> extends Promise<infer T> ? T : never);
+
+    // No stored installation ID for this app
+    mockedGetStoredInstallationId.mockResolvedValue(undefined);
+    mockedResolveInstallationId.mockResolvedValue(150968403);
+
+    mockedInstallationAuth.mockResolvedValue({
+      token: 'installation-token',
+      type: 'token',
+      tokenType: 'installation',
+      installationId: 150968403,
+      expiresAt: new Date().toISOString(),
+      permissions: {},
+      repositorySelection: 'all',
+    } as unknown as Awaited<ReturnType<typeof ghAuth.createGithubInstallationAuth>>);
+
+    await scaleUpModule.scaleUp(payload);
+
+    // Must NOT use the payload's installationId (36190402) — that belongs to app 0
+    expect(mockedResolveInstallationId).toHaveBeenCalled();
+    expect(mockedInstallationAuth).toHaveBeenCalledWith(
+      150968403, // resolved via API for app 1
+      '',
+      1,
     );
   });
 
-  it('works when primary app (index 0) is selected', async () => {
+  it('uses payload installationId for primary app (index 0) without stored ID', async () => {
     mockedAppAuth.mockResolvedValue({
       token: 'app-jwt-token',
       appIndex: 0,
@@ -133,6 +171,9 @@ describe('multi-app: installation auth must use the same appIndex as app auth', 
       expiresAt: '',
     } as ReturnType<typeof ghAuth.createGithubAppAuth> extends Promise<infer T> ? T : never);
 
+    // No stored installation ID
+    mockedGetStoredInstallationId.mockResolvedValue(undefined);
+
     mockedInstallationAuth.mockResolvedValue({
       token: 'installation-token',
       type: 'token',
@@ -145,10 +186,43 @@ describe('multi-app: installation auth must use the same appIndex as app auth', 
 
     await scaleUpModule.scaleUp(payload);
 
+    // Primary app CAN use the webhook payload's installation ID
     expect(mockedInstallationAuth).toHaveBeenCalledWith(
-      36190402,
+      36190402, // from payload — valid for primary app
       '',
-      0, // appIndex must be 0 when primary app was selected
+      0,
     );
+    expect(mockedResolveInstallationId).not.toHaveBeenCalled();
+  });
+
+  it('uses stored installation ID for primary app when available', async () => {
+    mockedAppAuth.mockResolvedValue({
+      token: 'app-jwt-token',
+      appIndex: 0,
+      type: 'app',
+      expiresAt: '',
+    } as ReturnType<typeof ghAuth.createGithubAppAuth> extends Promise<infer T> ? T : never);
+
+    // Stored ID takes precedence even for primary app
+    mockedGetStoredInstallationId.mockResolvedValue(99999);
+
+    mockedInstallationAuth.mockResolvedValue({
+      token: 'installation-token',
+      type: 'token',
+      tokenType: 'installation',
+      installationId: 99999,
+      expiresAt: new Date().toISOString(),
+      permissions: {},
+      repositorySelection: 'all',
+    } as unknown as Awaited<ReturnType<typeof ghAuth.createGithubInstallationAuth>>);
+
+    await scaleUpModule.scaleUp(payload);
+
+    expect(mockedInstallationAuth).toHaveBeenCalledWith(
+      99999, // stored ID preferred over payload
+      '',
+      0,
+    );
+    expect(mockedResolveInstallationId).not.toHaveBeenCalled();
   });
 });
