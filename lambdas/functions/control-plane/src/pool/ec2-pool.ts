@@ -24,6 +24,7 @@ async function createEc2PoolRunners({
   githubRunnerConfig,
   numberOfRunners,
   githubInstallationClient,
+  appIdx,
 }: CreatePoolRunnersInput): Promise<string[]> {
   const config = loadEc2ProviderConfig();
 
@@ -42,6 +43,7 @@ async function createEc2PoolRunners({
     numberOfRunners,
     githubInstallationClient,
     'pool-lambda',
+    appIdx,
   );
   return instances;
 }

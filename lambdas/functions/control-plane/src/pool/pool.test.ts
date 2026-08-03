@@ -227,6 +227,7 @@ describe('Test simple pool.', () => {
         8,
         expect.anything(),
         'pool-lambda',
+        0,
       );
     });
 
@@ -238,6 +239,7 @@ describe('Test simple pool.', () => {
         8,
         expect.anything(),
         'pool-lambda',
+        0,
       );
     });
 

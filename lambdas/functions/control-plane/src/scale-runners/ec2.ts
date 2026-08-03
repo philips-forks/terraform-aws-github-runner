@@ -62,6 +62,7 @@ export async function createRunners(
   numberOfRunners: number,
   ghClient: Octokit,
   source: LambdaRunnerSource = 'scale-up-lambda',
+  appIdx?: number,
 ): Promise<CreateScaleUpRunnersResult> {
   let result: CreateScaleUpRunnersResult;
   try {
