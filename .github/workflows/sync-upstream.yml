@@ -150,15 +150,23 @@ jobs:
             --ref philips \
             --field "tag=upstream-${UPSTREAM_TAG}"
 
-      - name: Open issue on conflict
+      - name: Create or update issue on conflict
         if: steps.rebase.outputs.result == 'conflict'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create \
-            --title "Rebase conflict: philips onto main ($(date -u +%Y-%m-%d))" \
+          issue_title="Rebase conflict: philips onto main ($(date -u +%Y-%m-%d))"
+          issue_body="${RUNNER_TEMP}/rebase-conflict.md"
+          existing_issue=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
             --label "rebase-conflict" \
-            --body "The automated rebase of \`philips\` onto \`main\` failed due to conflicts.
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')
+
+          cat > "${issue_body}" <<EOF
+          The automated rebase of \`philips\` onto \`main\` failed due to conflicts.
 
           **Action required:** A maintainer must resolve this manually.
 
@@ -173,4 +181,18 @@ jobs:
 
           Use \`/sync-upstream\` in Copilot chat for the full resolution procedure.
 
-          Triggered by: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          Triggered by: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          if [ -n "${existing_issue}" ]; then
+            gh issue edit "${existing_issue}" \
+              --repo "${{ github.repository }}" \
+              --title "${issue_title}" \
+              --body-file "${issue_body}"
+          else
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "${issue_title}" \
+              --label "rebase-conflict" \
+              --body-file "${issue_body}"
+          fi
