@@ -563,6 +563,15 @@ async function terminateOrphan(
   }
 }
 
+async function sweepStandby(environment: string, computeProvider: ScaleDownComputeProvider): Promise<void> {
+  if (!computeProvider.sweepStandby) return;
+  try {
+    await computeProvider.sweepStandby(environment);
+  } catch (e) {
+    logger.warn(`Failure during standby instance sweep.`, { error: e });
+  }
+}
+
 export function oldestFirstStrategy(a: RunnerInfo, b: RunnerInfo): number {
   if (a.launchTime === undefined) return 1;
   if (b.launchTime === undefined) return 1;
@@ -664,6 +673,8 @@ export async function scaleDown(remainingTime = () => Infinity): Promise<void> {
   if (remainingTime() < 10000) return;
   // first runners marked to be orphan.
   await terminateOrphan(environment, computeProvider, undefined, remainingTime);
+
+  await sweepStandby(environment, computeProvider);
 
   // next scale down idle runners with respect to config and mark potential orphans
   if (remainingTime() < 10000) return;
