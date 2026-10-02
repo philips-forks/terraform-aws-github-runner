@@ -20,6 +20,8 @@ resource "aws_iam_policy" "ami_id_ssm_parameter_read" {
 }
 
 data "aws_iam_policy_document" "scale_up" {
+  source_policy_documents = data.aws_iam_policy_document.scale_up_warm[*].json
+
   statement {
     effect = "Allow"
     actions = [
@@ -126,9 +128,25 @@ data "aws_iam_policy_document" "scale_down" {
       values   = [var.prefix]
     }
   }
+
+  # Scale-down sweeps stopped warm-pool instances even after warm mode is disabled.
+  statement {
+    sid       = "WarmPoolSweepSpotRequests"
+    effect    = "Allow"
+    actions   = ["ec2:CancelSpotInstanceRequests"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/ghr:Application"
+      values   = ["github-action-runner"]
+    }
+  }
 }
 
 data "aws_iam_policy_document" "pool" {
+  source_policy_documents = data.aws_iam_policy_document.pool_warm[*].json
+
   statement {
     effect = "Allow"
     actions = [
