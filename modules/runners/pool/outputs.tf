@@ -9,3 +9,7 @@ output "lambda" {
 output "lambda_log_group" {
   value = aws_cloudwatch_log_group.pool
 }
+
+output "instance_stopped_rule" {
+  value = one(aws_cloudwatch_event_rule.instance_stopped[*])
+}

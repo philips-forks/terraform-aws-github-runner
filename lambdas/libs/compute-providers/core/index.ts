@@ -200,6 +200,8 @@ export interface PoolStandbyOperations {
   /** Cancels each request and terminates its replacement instance, if any. */
   cancelSpotRequests?(requests: StandbySpotRequest[]): Promise<StandbyBatchResult>;
   currentImage?(): Promise<StandbyImage>;
+  /** Marks a priming instance warm once it stopped itself; resolves false for any other instance. */
+  markPrimed?(instanceId: string): Promise<boolean>;
 }
 
 export interface PoolComputeProvider<TRunner = unknown> extends ComputeProvider {

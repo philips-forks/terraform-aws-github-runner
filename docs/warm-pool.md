@@ -8,7 +8,7 @@ A warm pool keeps stopped, pre-booted runner instances ready. When a job arrives
 ## How it works
 
 1. The pool Lambda launches instances until the number of warm and priming instances matches the pool size from `pool_config`.
-2. Each instance installs the runner, prepares itself, and shuts itself down. It never registers with GitHub while it is in the pool.
+2. Each instance installs the runner, prepares itself, and shuts itself down. It never registers with GitHub while it is in the pool. Its stop event invokes the pool Lambda, which marks it warm within seconds.
 3. When a job is queued, scale-up claims the newest warm instance in the warm pool index, starts it, and then writes its registration config, the same order as a new instance. A boot hook waits for the config, registers the runner, and runs the job.
 4. A warm instance is activated at most once and never returns to the pool. After activation it follows the normal runner lifecycle: an ephemeral runner runs one job, a non-ephemeral runner can pick up more jobs until scale-down removes it.
 5. If no warm instance is available, or starting one fails, scale-up launches a new instance as usual.
@@ -22,6 +22,8 @@ With warm mode enabled, `pool_config` sizes the warm pool instead of the pool of
 A DynamoDB table (`<prefix>-warm-pool-index`) records which instances belong to the warm pool. EC2 stays the source of truth for their state: each pool run reads the indexed instances by ID and writes changes back to the index, and scale-up picks warm instances from the index without calling EC2 to list them. Listing instances by tag gets slower with every matching instance, while reading by ID stays fast, which matters for large pools.
 
 Scale-up claims an instance in the index before starting it, so two invocations never start the same instance, and the pool never destroys a claimed instance. A claim expires after 10 minutes. If an instance no longer matches its index entry when scale-up starts it (for example it was terminated), scale-up tries the next warm instance.
+
+An EventBridge rule sends EC2 stop events to the pool Lambda, which marks a primed instance warm as soon as it stops itself. EC2 events cannot be filtered by tag, so the rule fires for every instance that stops in the region; the pool ignores instances that are not in its index after one DynamoDB read. If an event is missed, the next scheduled pool run marks the instance warm.
 
 About once an hour the pool also lists its instances by tag and adds any instance missing from the index, for example after a Lambda crashed between launch and the index write.
 
@@ -84,7 +86,7 @@ multi_runner_config = {
 | `enabled` | `false` | Keep the pool size of stopped instances instead of idle runners. |
 | `max_age_hours` | `168` | Whole hours, at least 1, after which a warm instance is replaced. |
 
-The pool only refills and evicts when a `pool_config` schedule fires, so use a frequent schedule (for example every minute) while warm instances are wanted. A schedule with `size = 0` drains the pool, for example outside office hours.
+Primed instances become available without waiting for a schedule, but the pool only refills and evicts when a `pool_config` schedule fires, so use a frequent schedule (for example every minute) while warm instances are wanted. A schedule with `size = 0` drains the pool, for example outside office hours.
 
 ### Bursts of jobs
 

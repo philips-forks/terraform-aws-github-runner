@@ -87,6 +87,54 @@ describe('query', () => {
   });
 });
 
+describe('get', () => {
+  it('reads one item by its key', async () => {
+    mockDynamoClient.on(QueryCommand).resolves({ Items: [{ ...KEY('i-1'), state: { S: 'PRIMING' } }] });
+
+    await expect(index.get('i-1')).resolves.toEqual(expect.objectContaining({ instanceId: 'i-1', state: 'PRIMING' }));
+    expect(mockDynamoClient).toHaveReceivedCommandWith(QueryCommand, {
+      TableName: 'warm-index',
+      KeyConditionExpression: '#environment = :environment AND instanceId = :instanceId',
+      ExpressionAttributeValues: { ':environment': { S: 'unit-test' }, ':instanceId': { S: 'i-1' } },
+      ConsistentRead: true,
+    });
+  });
+
+  it('resolves undefined for an unknown instance', async () => {
+    mockDynamoClient.on(QueryCommand).resolves({ Items: [] });
+
+    await expect(index.get('i-unknown')).resolves.toBeUndefined();
+  });
+});
+
+describe('markWarm', () => {
+  it('writes a WARM item only while it is still PRIMING', async () => {
+    mockDynamoClient.on(UpdateItemCommand).resolves({});
+
+    await expect(
+      index.markWarm({
+        instanceId: 'i-1',
+        state: 'WARM',
+        expiresAt: '2026-10-08T10:00:00.000Z',
+        instanceType: 'm7g.large',
+      }),
+    ).resolves.toBe(true);
+
+    expect(updateInputs()[0]).toMatchObject({
+      Key: KEY('i-1'),
+      UpdateExpression: 'SET #state = :state, #ttl = :ttl, expiresAt = :expiresAt, instanceType = :instanceType',
+      ConditionExpression: '#state = :priming',
+      ExpressionAttributeValues: expect.objectContaining({ ':state': { S: 'WARM' }, ':priming': { S: 'PRIMING' } }),
+    });
+  });
+
+  it('resolves false when the item is no longer PRIMING', async () => {
+    mockDynamoClient.on(UpdateItemCommand).rejects(conditionalCheckFailed());
+
+    await expect(index.markWarm({ instanceId: 'i-1', state: 'WARM' })).resolves.toBe(false);
+  });
+});
+
 describe('update', () => {
   it('writes the EC2-derived fields unless the item was activated', async () => {
     mockDynamoClient.on(UpdateItemCommand).resolves({});

@@ -397,5 +397,49 @@ describe('pool adjustment', () => {
 
       expect(mockedAppAuth).not.toHaveBeenCalled();
     });
+
+    describe('instance stop events', () => {
+      const markPrimed = vi.fn<NonNullable<PoolStandbyOperations['markPrimed']>>();
+      const stopEvent = (state: string) => ({
+        source: 'aws.ec2' as const,
+        'detail-type': 'EC2 Instance State-change Notification' as const,
+        detail: { 'instance-id': 'i-primed', state },
+      });
+
+      beforeEach(() => {
+        markPrimed.mockReset().mockResolvedValue(true);
+        mockedResolveCapability.mockReturnValue(() => ({ ...poolProvider, standby: { ...standby, markPrimed } }));
+      });
+
+      it('marks a stopped instance as primed without running the pool', async () => {
+        await adjust(stopEvent('stopped'));
+
+        expect(markPrimed).toHaveBeenCalledWith('i-primed');
+        expect(standby.list).not.toHaveBeenCalled();
+        expect(standby.launch).not.toHaveBeenCalled();
+        expect(mockedAppAuth).not.toHaveBeenCalled();
+      });
+
+      it('ignores other state changes', async () => {
+        await adjust(stopEvent('running'));
+
+        expect(markPrimed).not.toHaveBeenCalled();
+      });
+
+      it('ignores stop events when warm mode is disabled', async () => {
+        delete process.env.WARM_POOL_ENABLED;
+
+        await adjust(stopEvent('stopped'));
+
+        expect(markPrimed).not.toHaveBeenCalled();
+        expect(poolProvider.listRunners).not.toHaveBeenCalled();
+      });
+
+      it('leaves the instance to the next pool run when marking it fails', async () => {
+        markPrimed.mockRejectedValue(new Error('throttled'));
+
+        await expect(adjust(stopEvent('stopped'))).resolves.toBeUndefined();
+      });
+    });
   });
 });

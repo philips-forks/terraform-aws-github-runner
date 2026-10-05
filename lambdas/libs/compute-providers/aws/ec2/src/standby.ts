@@ -142,6 +142,8 @@ export interface Ec2StandbyOperations {
   listStandby(filters: ListStandbyInput): Promise<StandbyInstance[]>;
   /** Reads exactly the indexed instances by ID, with one by-ID spot request lookup. */
   readStandby(indexed: Ec2IndexedInstance[]): Promise<Ec2StandbyRead>;
+  /** Reads one instance by ID, classified from EC2 data only; undefined when EC2 no longer knows it. */
+  readInstance(instanceId: string): Promise<StandbyInstance | undefined>;
   listStoppedWarmInstances(environment: string): Promise<Ec2StoppedWarmInstance[]>;
   /** One listing for scale-down: its runners and the stopped warm instances to sweep. */
   listScaleDownInstances(environment: string): Promise<Ec2ScaleDownListing>;
@@ -162,6 +164,11 @@ export function createEc2StandbyClient(ec2Client: EC2Client): Ec2StandbyClient {
         runWithRequestSignal(signal, () => launchWarmInstances(ec2Client, parameters, signal)),
       listStandby: (filters) => runWithRequestSignal(signal, () => listStandbyInstances(ec2Client, filters, signal)),
       readStandby: (indexed) => runWithRequestSignal(signal, () => readStandbyInstances(ec2Client, indexed, signal)),
+      readInstance: (instanceId) =>
+        runWithRequestSignal(signal, async () => {
+          const [instance] = await describeInstancesById(ec2Client, [instanceId], signal);
+          return instance ? toStandbyInstance(instance, undefined) : undefined;
+        }),
       listStoppedWarmInstances: (environment) =>
         runWithRequestSignal(signal, () => listStoppedWarmInstances(ec2Client, environment, signal)),
       listScaleDownInstances: (environment) =>

@@ -468,6 +468,55 @@ describe('listStandby', () => {
   });
 });
 
+describe('readInstance', () => {
+  it('reads one instance by ID and classifies it from EC2 data only', async () => {
+    mockEC2Client.on(DescribeInstancesCommand).resolves(
+      describeResult([
+        {
+          InstanceId: 'i-primed',
+          State: { Name: 'stopped' },
+          StateReason: { Code: 'Client.InstanceInitiatedShutdown' },
+          SpotInstanceRequestId: 'sir-1',
+          InstanceType: 'm7g.large',
+          Placement: { AvailabilityZone: 'eu-west-1a' },
+        },
+      ]),
+    );
+
+    await expect(standby.readInstance('i-primed')).resolves.toEqual(
+      expect.objectContaining({
+        instanceId: 'i-primed',
+        state: 'WARM',
+        spotInstanceRequestId: 'sir-1',
+        instanceType: 'm7g.large',
+        availabilityZone: 'eu-west-1a',
+      }),
+    );
+    expect(mockEC2Client).toHaveReceivedCommandWith(DescribeInstancesCommand, { InstanceIds: ['i-primed'] });
+    expect(mockEC2Client).not.toHaveReceivedCommand(DescribeSpotInstanceRequestsCommand);
+  });
+
+  it('classifies an instance stopped by AWS as garbage', async () => {
+    mockEC2Client
+      .on(DescribeInstancesCommand)
+      .resolves(
+        describeResult([
+          { InstanceId: 'i-stopped', State: { Name: 'stopped' }, StateReason: { Code: 'Server.SpotInstanceShutdown' } },
+        ]),
+      );
+
+    await expect(standby.readInstance('i-stopped')).resolves.toEqual(expect.objectContaining({ state: 'GARBAGE' }));
+  });
+
+  it('resolves undefined when EC2 no longer knows the instance', async () => {
+    mockEC2Client
+      .on(DescribeInstancesCommand)
+      .rejects(await ec2SdkError('InvalidInstanceID.NotFound', "The instance ID 'i-gone' does not exist"));
+
+    await expect(standby.readInstance('i-gone')).resolves.toBeUndefined();
+  });
+});
+
 describe('readStandby', () => {
   const activated = (time: string) => [{ Key: 'ghr:warm-activated', Value: time }];
 
