@@ -252,3 +252,34 @@ resource "aws_scheduler_schedule" "pool" {
     })
   }
 }
+
+# Primed instances stop themselves; mark them warm without waiting for the next schedule.
+resource "aws_cloudwatch_event_rule" "instance_stopped" {
+  count = var.config.warm.enabled ? 1 : 0
+
+  name_prefix = local.pool_name_prefix
+  description = "Marks primed warm pool instances available as soon as they stop."
+  event_pattern = jsonencode({
+    source        = ["aws.ec2"]
+    "detail-type" = ["EC2 Instance State-change Notification"]
+    detail        = { state = ["stopped"] }
+  })
+  tags = var.config.tags
+}
+
+resource "aws_cloudwatch_event_target" "instance_stopped" {
+  count = var.config.warm.enabled ? 1 : 0
+
+  rule = aws_cloudwatch_event_rule.instance_stopped[0].name
+  arn  = aws_lambda_function.pool.arn
+}
+
+resource "aws_lambda_permission" "instance_stopped" {
+  count = var.config.warm.enabled ? 1 : 0
+
+  statement_id  = "AllowInstanceStoppedEvents"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.pool.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.instance_stopped[0].arn
+}

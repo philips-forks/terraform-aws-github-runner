@@ -229,6 +229,14 @@ function createEc2StandbyCapability(
       const { launchTemplateName, amiIdSsmParameterName } = loadEc2ProviderConfig();
       return standbyOperations.currentImage({ launchTemplateName, amiIdSsmParameterName });
     },
+    // Spot request state is not read: a self-initiated stop is enough to classify a primed instance (D14).
+    markPrimed: async (instanceId) => {
+      const item = await index().get(instanceId);
+      if (item?.state !== 'PRIMING') return false;
+      const instance = await standbyOperations.readInstance(instanceId);
+      if (instance?.state !== 'WARM') return false;
+      return index().markWarm(indexUpdate(instance));
+    },
   };
 }
 

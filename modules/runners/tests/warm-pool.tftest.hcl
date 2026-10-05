@@ -81,6 +81,11 @@ run "warm_pool_disabled_by_default" {
     && !contains(keys(module.pool[0].lambda.environment[0].variables), "WARM_POOL_ENABLED"))
     error_message = "Warm pool env vars should not be set when warm_pool is disabled"
   }
+
+  assert {
+    condition     = module.pool[0].instance_stopped_rule == null
+    error_message = "No instance stop rule should exist when warm_pool is disabled"
+  }
 }
 
 run "warm_pool_enabled" {
@@ -113,6 +118,13 @@ run "warm_pool_enabled" {
       && module.pool[0].lambda.environment[0].variables["WARM_POOL_MAX_AGE_HOURS"] == "24"
     && module.pool[0].lambda.environment[0].variables["WARM_POOL_INDEX_TABLE_NAME"] == aws_dynamodb_table.warm_pool_index[0].name)
     error_message = "The pool should receive the warm pool env vars"
+  }
+
+  assert {
+    condition = (module.pool[0].instance_stopped_rule != null
+      && jsondecode(module.pool[0].instance_stopped_rule.event_pattern).source == ["aws.ec2"]
+    && jsondecode(module.pool[0].instance_stopped_rule.event_pattern).detail.state == ["stopped"])
+    error_message = "Instance stop events should invoke the pool"
   }
 }
 
