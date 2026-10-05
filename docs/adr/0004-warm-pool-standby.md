@@ -70,7 +70,9 @@ A warm instance is activated at most once. Runners that ran a job are never park
   so the pool needs no GitHub API calls and warm mode does not require
   organization runners. The owner is bound when scale-up hands over the
   registration config.
-- **Instances park themselves.** No lambda waits for a boot.
+- **Instances park themselves.** No lambda waits for a boot. The stop event
+  invokes the pool lambda, which marks the primed instance warm right away;
+  the scheduled pool run is the fallback.
 - **Boot hook.** A systemd unit reruns the start script on every boot and picks
   a mode: run (registration config exists), prime (warm-pool member, not
   activated), or wait (cold path).
@@ -144,7 +146,9 @@ activated spot instances that stopped instead of terminating.
 
 - Warm spot launches lose `CreateFleet` price-capacity-optimized placement and
   fall back through instance types and subnets instead.
-- Refill and eviction happen only on pool schedule events.
+- Refill and eviction happen only on pool schedule events. Primed instances
+  become available on their stop event, which fires for every instance stop in
+  the region and invokes the pool lambda of each warm runner configuration.
 - Custom user-data templates must keep the start script for the boot hook.
   Otherwise warm instances never park and are evicted.
 - Linux only at first; Windows was added later with a startup scheduled task as its boot hook. macOS is not supported.

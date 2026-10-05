@@ -175,6 +175,7 @@ describe('createEc2PoolCapability.standby', () => {
     launchWarm: vi.fn<Ec2StandbyOperations['launchWarm']>(),
     listStandby: vi.fn<Ec2StandbyOperations['listStandby']>(),
     readStandby: vi.fn<Ec2StandbyOperations['readStandby']>(),
+    readInstance: vi.fn<Ec2StandbyOperations['readInstance']>(),
     listStoppedWarmInstances: vi.fn<Ec2StandbyOperations['listStoppedWarmInstances']>(),
     listScaleDownInstances: vi.fn<Ec2StandbyOperations['listScaleDownInstances']>(),
     startInstance: vi.fn<Ec2StandbyOperations['startInstance']>(),
@@ -183,6 +184,8 @@ describe('createEc2PoolCapability.standby', () => {
   } satisfies Ec2StandbyOperations;
   const index = {
     query: vi.fn<WarmIndexStore['query']>(),
+    get: vi.fn<WarmIndexStore['get']>(),
+    markWarm: vi.fn<WarmIndexStore['markWarm']>(),
     update: vi.fn<WarmIndexStore['update']>(),
     remove: vi.fn<WarmIndexStore['remove']>(),
     removeUnclaimed: vi.fn<WarmIndexStore['removeUnclaimed']>(),
@@ -424,6 +427,75 @@ describe('createEc2PoolCapability.standby', () => {
     });
     expect(standbyOperations.cancelSpotRequest).not.toHaveBeenCalled();
     expect(index.remove).toHaveBeenCalledWith('i-gone');
+  });
+
+  describe('markPrimed', () => {
+    const primed = {
+      instanceId: 'i-primed',
+      state: 'WARM' as const,
+      launchTime: new Date('2026-10-05T15:35:00.000Z'),
+      expiresAt: 'later',
+      instanceType: 'm7g.large',
+      availabilityZone: 'eu-west-1a',
+      spotInstanceRequestId: 'sir-1',
+    };
+
+    beforeEach(() => {
+      index.get.mockResolvedValue({ instanceId: 'i-primed', state: 'PRIMING' });
+      index.markWarm.mockResolvedValue(true);
+      standbyOperations.readInstance.mockResolvedValue(primed);
+    });
+
+    it('marks a priming instance that stopped itself warm', async () => {
+      await expect(standby.markPrimed!('i-primed')).resolves.toBe(true);
+
+      expect(standbyOperations.readInstance).toHaveBeenCalledWith('i-primed');
+      expect(index.markWarm).toHaveBeenCalledWith({
+        instanceId: 'i-primed',
+        state: 'WARM',
+        launchTime: '2026-10-05T15:35:00.000Z',
+        expiresAt: 'later',
+        instanceType: 'm7g.large',
+        availabilityZone: 'eu-west-1a',
+        spotInstanceRequestId: 'sir-1',
+      });
+      expect(standbyOperations.readStandby).not.toHaveBeenCalled();
+    });
+
+    it('ignores an instance outside the index without reading EC2', async () => {
+      index.get.mockResolvedValue(undefined);
+
+      await expect(standby.markPrimed!('i-other')).resolves.toBe(false);
+
+      expect(standbyOperations.readInstance).not.toHaveBeenCalled();
+      expect(index.markWarm).not.toHaveBeenCalled();
+    });
+
+    it('ignores an instance that is already warm', async () => {
+      index.get.mockResolvedValue({ instanceId: 'i-primed', state: 'WARM' });
+
+      await expect(standby.markPrimed!('i-primed')).resolves.toBe(false);
+
+      expect(standbyOperations.readInstance).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['stopped by AWS or an operator', { ...primed, state: 'GARBAGE' as const }],
+      ['activated', { ...primed, state: 'ACTIVE' as const }],
+      ['gone', undefined],
+    ])('leaves an instance that was %s to the scheduled run', async (_, instance) => {
+      standbyOperations.readInstance.mockResolvedValue(instance);
+
+      await expect(standby.markPrimed!('i-primed')).resolves.toBe(false);
+
+      expect(index.markWarm).not.toHaveBeenCalled();
+    });
+
+    it('throws when the index cannot be written', async () => {
+      index.markWarm.mockRejectedValue(new Error('throttled'));
+
+      await expect(standby.markPrimed!('i-primed')).rejects.toThrow('throttled');
+    });
   });
 
   it('resolves the current image from the provider config', async () => {
