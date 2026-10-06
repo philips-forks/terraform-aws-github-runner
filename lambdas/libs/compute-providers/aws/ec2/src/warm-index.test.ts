@@ -87,26 +87,6 @@ describe('query', () => {
   });
 });
 
-describe('get', () => {
-  it('reads one item by its key', async () => {
-    mockDynamoClient.on(QueryCommand).resolves({ Items: [{ ...KEY('i-1'), state: { S: 'PRIMING' } }] });
-
-    await expect(index.get('i-1')).resolves.toEqual(expect.objectContaining({ instanceId: 'i-1', state: 'PRIMING' }));
-    expect(mockDynamoClient).toHaveReceivedCommandWith(QueryCommand, {
-      TableName: 'warm-index',
-      KeyConditionExpression: '#environment = :environment AND instanceId = :instanceId',
-      ExpressionAttributeValues: { ':environment': { S: 'unit-test' }, ':instanceId': { S: 'i-1' } },
-      ConsistentRead: true,
-    });
-  });
-
-  it('resolves undefined for an unknown instance', async () => {
-    mockDynamoClient.on(QueryCommand).resolves({ Items: [] });
-
-    await expect(index.get('i-unknown')).resolves.toBeUndefined();
-  });
-});
-
 describe('markWarm', () => {
   it('writes a WARM item only while it is still PRIMING', async () => {
     mockDynamoClient.on(UpdateItemCommand).resolves({});
