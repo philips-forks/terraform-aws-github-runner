@@ -41,7 +41,6 @@ export type WarmIndexUpdate = Pick<WarmIndexItem, 'instanceId' | 'state'> &
 
 export interface WarmIndexStore {
   query(): Promise<WarmIndexItem[]>;
-  get(instanceId: string): Promise<WarmIndexItem | undefined>;
   /** Writes EC2-derived fields; never overwrites an item that scale-up marked activated. */
   update(item: WarmIndexUpdate): Promise<void>;
   /** Writes a WARM item only while it is still PRIMING; resolves false otherwise. */
@@ -156,20 +155,6 @@ export function createWarmIndexStore(
         exclusiveStartKey = result.LastEvaluatedKey;
       } while (exclusiveStartKey);
       return items;
-    },
-
-    get: async (instanceId) => {
-      const result = await dynamoClient.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: '#environment = :environment AND instanceId = :instanceId',
-          ExpressionAttributeNames: { '#environment': 'environment' },
-          ExpressionAttributeValues: { ':environment': { S: environment }, ':instanceId': { S: instanceId } },
-          ConsistentRead: true,
-        }),
-      );
-      const item = result.Items?.[0];
-      return item ? toItem(instanceId, item) : undefined;
     },
 
     update: async (item) => {

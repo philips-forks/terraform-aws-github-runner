@@ -37,22 +37,6 @@ export function isWarmPoolEnabled(): boolean {
   return yn(process.env.WARM_POOL_ENABLED, { default: false });
 }
 
-// The scheduled run classifies the instance anyway, so a failure here only delays it.
-export async function markPrimedInstance(
-  computeProvider: Pick<PoolComputeProvider, 'type' | 'standby'>,
-  instanceId: string,
-): Promise<void> {
-  const markPrimed = computeProvider.standby?.markPrimed;
-  if (!markPrimed) return;
-  try {
-    if (await markPrimed(instanceId)) logger.info(`Warm instance '${instanceId}' finished priming and is available.`);
-  } catch (error) {
-    logger.warn(`Failed to mark primed instance '${instanceId}' warm; the next pool run will classify it.`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 export async function adjustWarmPool(
   computeProvider: Pick<PoolComputeProvider, 'type' | 'standby'>,
   poolSize: number,
