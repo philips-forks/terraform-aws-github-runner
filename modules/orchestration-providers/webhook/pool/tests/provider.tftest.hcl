@@ -128,7 +128,7 @@ run "provider_supplies_only_compute_specific_pool_configuration" {
   }
 
   assert {
-    condition     = toset(keys(output.pool)) == toset(["lambda", "log_group", "role", "instance_stopped_rule"])
+    condition     = toset(keys(output.pool)) == toset(["lambda", "log_group", "role"])
     error_message = "The pool module must expose its resources through one nested output."
   }
 

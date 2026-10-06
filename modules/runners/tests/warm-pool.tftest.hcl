@@ -83,8 +83,8 @@ run "warm_pool_disabled_by_default" {
   }
 
   assert {
-    condition     = module.pool[0].instance_stopped_rule == null
-    error_message = "No instance stop rule should exist when warm_pool is disabled"
+    condition     = output.warm_pool_index_table == null
+    error_message = "No warm pool index table should be exposed when warm_pool is disabled"
   }
 }
 
@@ -121,10 +121,8 @@ run "warm_pool_enabled" {
   }
 
   assert {
-    condition = (module.pool[0].instance_stopped_rule != null
-      && jsondecode(module.pool[0].instance_stopped_rule.event_pattern).source == ["aws.ec2"]
-    && jsondecode(module.pool[0].instance_stopped_rule.event_pattern).detail.state == ["stopped"])
-    error_message = "Instance stop events should invoke the pool"
+    condition     = output.warm_pool_index_table.name == aws_dynamodb_table.warm_pool_index[0].name
+    error_message = "The warm pool index table should be exposed for the stop-event consumer"
   }
 }
 

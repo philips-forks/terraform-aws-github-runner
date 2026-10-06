@@ -4,7 +4,8 @@ import { captureLambdaHandler, tracer } from '@aws-github-runner/aws-powertools-
 import { createRunnerConfigHousekeeper } from '@aws-github-runner/storage-providers';
 import { Context, type SQSBatchItemFailure, type SQSBatchResponse, SQSEvent } from 'aws-lambda';
 
-import { InstanceStateChangeEvent, PoolEvent, adjust } from './pool/pool';
+import { PoolEvent, adjust } from './pool/pool';
+import { markPrimedFromStopEvents } from './pool/stop-events';
 import { scaleDown } from './scale-runners/scale-down';
 import { scaleUp } from './scale-runners/scale-up';
 import type { ActionRequestMessage, ActionRequestMessageSQS } from './scale-runners/types';
@@ -94,7 +95,7 @@ export async function scaleDownHandler(event: unknown, context: Context): Promis
   }
 }
 
-export async function adjustPool(event: PoolEvent | InstanceStateChangeEvent, context: Context): Promise<void> {
+export async function adjustPool(event: PoolEvent, context: Context): Promise<void> {
   setContext(context, 'lambda.ts');
   logger.logEventIfEnabled(event);
 
@@ -106,6 +107,13 @@ export async function adjustPool(event: PoolEvent | InstanceStateChangeEvent, co
   return Promise.resolve();
 }
 
+export async function warmPoolStopEvents(event: SQSEvent, context: Context): Promise<SQSBatchResponse> {
+  setContext(context, 'lambda.ts');
+  logger.logEventIfEnabled(event);
+
+  return { batchItemFailures: await markPrimedFromStopEvents(event.Records) };
+}
+
 export const addMiddleware = () => {
   const handler = captureLambdaHandler(tracer);
   if (!handler) {
@@ -114,6 +122,7 @@ export const addMiddleware = () => {
   middy(scaleUpHandler).use(handler);
   middy(scaleDownHandler).use(handler);
   middy(adjustPool).use(handler);
+  middy(warmPoolStopEvents).use(handler);
   middy(runnerConfigHousekeeper).use(handler);
 };
 addMiddleware();

@@ -13,24 +13,13 @@ import {
 import { controlPlaneProviderRegistry } from '../control-plane-providers';
 import { getGitHubEnterpriseApiUrl } from '../scale-runners/github-runner';
 import type { RunnerStatus } from './pool-provider';
-import { adjustWarmPool, isWarmPoolEnabled, markPrimedInstance } from './warm-pool';
+import { adjustWarmPool, isWarmPoolEnabled } from './warm-pool';
 
 const logger = createChildLogger('pool');
 
 export interface PoolEvent {
   poolSize: number;
   type?: string;
-}
-
-/** EventBridge `EC2 Instance State-change Notification`, sent for every instance in the region. */
-export interface InstanceStateChangeEvent {
-  source: 'aws.ec2';
-  'detail-type': 'EC2 Instance State-change Notification';
-  detail: { 'instance-id': string; state: string };
-}
-
-function isInstanceStateChangeEvent(event: PoolEvent | InstanceStateChangeEvent): event is InstanceStateChangeEvent {
-  return 'source' in event && event.source === 'aws.ec2';
 }
 
 function resolvePoolProvider(type: string | undefined) {
@@ -41,13 +30,7 @@ function resolvePoolProvider(type: string | undefined) {
   };
 }
 
-export async function adjust(event: PoolEvent | InstanceStateChangeEvent): Promise<void> {
-  if (isInstanceStateChangeEvent(event)) {
-    if (isWarmPoolEnabled() && event.detail.state === 'stopped') {
-      await markPrimedInstance(resolvePoolProvider(undefined), event.detail['instance-id']);
-    }
-    return;
-  }
+export async function adjust(event: PoolEvent): Promise<void> {
   if (isWarmPoolEnabled()) {
     return adjustWarmPool(resolvePoolProvider(event.type), event.poolSize);
   }
