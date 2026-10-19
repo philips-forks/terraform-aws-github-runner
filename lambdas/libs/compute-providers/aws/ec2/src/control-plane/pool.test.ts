@@ -1,14 +1,15 @@
 import type { Octokit } from '@octokit/rest';
-import type {
-  CreateGitHubRunnerConfig,
-  CreateStartRunnerConfig,
-  PoolStandbyOperations,
-  RunnerInfo,
-} from '../../../../core';
+import type { CreateGitHubRunnerConfig, CreateStartRunnerConfig, RunnerInfo } from '../../../../core';
 import { bootTimeExceeded, type Ec2RunnerResourceOperations } from '../runners';
 import type { Ec2StandbyOperations } from '../standby';
 import type { WarmIndexStore } from '../warm-index';
-import { createEc2PoolCapability, type CreateWarmIndexStore, WARM_POOL_RECONCILE_INTERVAL_SECONDS } from './pool';
+import type { Ec2PoolStandbyOperations } from '../standby-types';
+import {
+  createEc2PoolCapability,
+  createEc2PoolStandbyOperations,
+  type CreateWarmIndexStore,
+  WARM_POOL_RECONCILE_INTERVAL_SECONDS,
+} from './pool';
 import { createRunners, type Ec2ProviderConfig, loadEc2ProviderConfig } from './runner-creation';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -196,9 +197,9 @@ describe('createEc2PoolCapability.standby', () => {
     claimReconcile: vi.fn<WarmIndexStore['claimReconcile']>(),
   } satisfies WarmIndexStore;
   const createIndexStore = vi.fn<CreateWarmIndexStore>(() => index);
-  let standby: PoolStandbyOperations;
+  let standby: Ec2PoolStandbyOperations;
   const poolInput = { environment: 'test-environment', runnerOwner: 'test-environment', runnerType: 'Org' as const };
-  const emptyRead = { instances: [], orphanedSpotRequests: [], spotStateKnown: true, releasedInstanceIds: [] };
+  const emptyRead = { instances: [], orphanedSpotRequests: [], releasedInstanceIds: [] };
   const providerConfig: Ec2ProviderConfig = {
     environment: 'config-environment',
     subnets: ['subnet-a', 'subnet-b'],
@@ -220,10 +221,7 @@ describe('createEc2PoolCapability.standby', () => {
     for (const fn of [...Object.values(index), ...Object.values(standbyOperations)]) fn.mockReset();
     process.env.WARM_POOL_INDEX_TABLE_NAME = 'warm-index';
     process.env.ENVIRONMENT = 'test-environment';
-    standby = createEc2PoolCapability(ec2Operations, createStartRunnerConfig, {
-      standbyOperations,
-      createIndexStore,
-    }).standby!;
+    standby = createEc2PoolStandbyOperations(standbyOperations, createIndexStore);
     index.query.mockResolvedValue([]);
     index.claimReconcile.mockResolvedValue(false);
     index.removeUnclaimed.mockResolvedValue(true);
@@ -232,6 +230,12 @@ describe('createEc2PoolCapability.standby', () => {
 
   it('is undefined when the capability has no standby operations', () => {
     expect(capability.standby).toBeUndefined();
+  });
+
+  it('exposes only reconcile and event processing to the control plane', () => {
+    expect(
+      createEc2PoolCapability(ec2Operations, createStartRunnerConfig, { standbyOperations, createIndexStore }).standby,
+    ).toEqual({ reconcile: expect.any(Function), processEvents: expect.any(Function) });
   });
 
   it('fails the listing when the index table is not configured', async () => {
@@ -254,7 +258,6 @@ describe('createEc2PoolCapability.standby', () => {
         { instanceId: 'i-same', state: 'WARM', launchTime, expiresAt: 'later' },
       ],
       orphanedSpotRequests: [{ spotInstanceRequestId: 'sir-9', instanceId: 'i-orphan' }],
-      spotStateKnown: true,
       releasedInstanceIds: ['i-gone'],
     });
 
@@ -264,7 +267,6 @@ describe('createEc2PoolCapability.standby', () => {
         expect.objectContaining({ instanceId: 'i-same' }),
       ],
       orphanedSpotRequests: [{ spotInstanceRequestId: 'sir-9', instanceId: 'i-orphan' }],
-      spotStateKnown: true,
     });
     expect(createIndexStore).toHaveBeenCalledWith('warm-index', 'test-environment');
     expect(standbyOperations.readStandby).toHaveBeenCalledWith([
@@ -313,7 +315,6 @@ describe('createEc2PoolCapability.standby', () => {
     await expect(standby.list(poolInput)).resolves.toEqual({
       instances: [],
       orphanedSpotRequests: [],
-      spotStateKnown: true,
     });
   });
 
@@ -403,7 +404,7 @@ describe('createEc2PoolCapability.standby', () => {
     standbyOperations.cancelSpotRequest.mockResolvedValueOnce().mockRejectedValueOnce(new Error('boom'));
 
     await expect(
-      standby.cancelSpotRequests!([
+      standby.cancelSpotRequests([
         { spotInstanceRequestId: 'sir-1', instanceId: 'i-1' },
         { spotInstanceRequestId: 'sir-2', instanceId: 'i-2' },
       ]),
@@ -416,7 +417,7 @@ describe('createEc2PoolCapability.standby', () => {
     standbyOperations.destroyInstance.mockResolvedValue();
 
     await expect(
-      standby.cancelSpotRequests!([
+      standby.cancelSpotRequests([
         { spotInstanceRequestId: 'sir-1', instanceId: 'i-gone', replacementInstanceId: 'i-respawn' },
       ]),
     ).resolves.toEqual({ succeeded: ['sir-1'], failed: [] });
@@ -451,7 +452,7 @@ describe('createEc2PoolCapability.standby', () => {
         primed('i-b', 'env-b'),
       ]);
 
-      await expect(standby.markPrimed!(['i-a', 'i-b', 'i-a'])).resolves.toEqual([]);
+      await expect(standby.markPrimed(['i-a', 'i-b', 'i-a'])).resolves.toEqual([]);
 
       expect(standbyOperations.readWarmPoolInstances).toHaveBeenCalledWith(['i-a', 'i-b']);
       expect(createIndexStore).toHaveBeenCalledWith('table-a', 'env-a');
@@ -476,7 +477,7 @@ describe('createEc2PoolCapability.standby', () => {
     ])('leaves %s alone', async (_, instance) => {
       standbyOperations.readWarmPoolInstances.mockResolvedValue([instance]);
 
-      await expect(standby.markPrimed!(['i-x'])).resolves.toEqual([]);
+      await expect(standby.markPrimed(['i-x'])).resolves.toEqual([]);
 
       expect(index.markWarm).not.toHaveBeenCalled();
     });
@@ -485,21 +486,21 @@ describe('createEc2PoolCapability.standby', () => {
       standbyOperations.readWarmPoolInstances.mockResolvedValue([primed('i-a', 'env-a'), primed('i-b', 'env-a')]);
       index.markWarm.mockRejectedValueOnce(new Error('throttled'));
 
-      await expect(standby.markPrimed!(['i-a', 'i-b'])).resolves.toEqual(['i-a']);
+      await expect(standby.markPrimed(['i-a', 'i-b'])).resolves.toEqual(['i-a']);
       expect(index.markWarm).toHaveBeenCalledTimes(2);
     });
 
     it('fails when no index tables are configured', async () => {
       delete process.env.WARM_POOL_INDEX_TABLES;
 
-      await expect(standby.markPrimed!(['i-a'])).rejects.toThrow('WARM_POOL_INDEX_TABLES is not set.');
+      await expect(standby.markPrimed(['i-a'])).rejects.toThrow('WARM_POOL_INDEX_TABLES is not set.');
     });
   });
 
   it('resolves the current image from the provider config', async () => {
     standbyOperations.currentImage.mockResolvedValue({ imageId: 'ami-1', launchTemplateVersion: '3' });
 
-    await expect(standby.currentImage!()).resolves.toEqual({ imageId: 'ami-1', launchTemplateVersion: '3' });
+    await expect(standby.currentImage()).resolves.toEqual({ imageId: 'ami-1', launchTemplateVersion: '3' });
     expect(standbyOperations.currentImage).toHaveBeenCalledWith({
       launchTemplateName: 'runner-template',
       amiIdSsmParameterName: '/ami',
