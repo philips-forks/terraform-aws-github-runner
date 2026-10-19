@@ -560,6 +560,10 @@ run "v2_inputs_do_not_require_legacy_arguments" {
             }
           }
         }
+        runner = {
+          os           = "linux"
+          architecture = "x64"
+        }
         compute_provider = {
           aws = {
             ec2 = {
@@ -920,6 +924,10 @@ run "scale_set_lane_requires_owner_for_non_enterprise_registration" {
           scale_set = {
             name = "scale-missing-owner"
           }
+        }
+        runner = {
+          os           = "linux"
+          architecture = "x64"
         }
         compute_provider = {
           aws = {
