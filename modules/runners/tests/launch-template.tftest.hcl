@@ -16,6 +16,12 @@ mock_provider "aws" {
       arn = "arn:aws:lambda:eu-west-1:123456789012:function:test"
     }
   }
+
+  mock_resource "aws_cloudwatch_event_rule" {
+    defaults = {
+      arn = "arn:aws:events:eu-west-1:123456789012:rule/test"
+    }
+  }
 }
 
 variables {
