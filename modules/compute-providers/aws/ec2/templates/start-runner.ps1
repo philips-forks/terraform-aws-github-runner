@@ -343,13 +343,15 @@ if ($agent_mode -eq "ephemeral") {
     }
     Write-Host "Runner has finished"
 
+    $spotCancelFailed = (Test-ActivatedSpot) -and -not (Confirm-SpotRequestCancelled)
+
     if ($enable_cloudwatch_agent)
     {
         Write-Host "Stopping CloudWatch Agent"
         & 'C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1' -a stop
     }
 
-    if ((Test-ActivatedSpot) -and -not (Confirm-SpotRequestCancelled)) {
+    if ($spotCancelFailed) {
         Write-Host "Shutting down instead of terminating, so the live spot request cannot launch a replacement"
         shutdown.exe /s /t 0 /f
     }

@@ -226,12 +226,20 @@ cleanup() {
     echo "Warm pool standby instance, skipping self-termination"
     return
   fi
+  local terminating=false spot_cancelled=true
+  if [ "$agent_mode" = "ephemeral" ] || [ "$exit_code" -ne 0 ]; then
+    terminating=true
+    # cancelling before the flush keeps its log lines in CloudWatch
+    if is_activated_spot && ! ensure_spot_request_cancelled; then
+      spot_cancelled=false
+    fi
+  fi
   # allows to flush the cloud watch logs and traces
   sleep 10
-  if [ "$agent_mode" = "ephemeral" ] || [ "$exit_code" -ne 0 ]; then
+  if [ "$terminating" = true ]; then
     echo "Stopping CloudWatch service"
     systemctl stop amazon-cloudwatch-agent.service || true
-    if is_activated_spot && ! ensure_spot_request_cancelled; then
+    if [ "$spot_cancelled" = false ]; then
       echo "Shutting down instead of terminating, so the live spot request cannot launch a replacement"
       shutdown -h now
       return

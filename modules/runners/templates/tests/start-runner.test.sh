@@ -351,6 +351,7 @@ boot "$SANDBOX/user-data.sh"
 check "the background detach was still waiting" called "sleep 55"
 check "cancels its own spot request once" test "$(grep -c -- "$cancel_call" "$SANDBOX/calls.log")" -eq 1
 check "cancels before terminating" before "$cancel_call" "terminate-instances"
+check "cancels before the CloudWatch agent stops" before "$cancel_call" "systemctl stop amazon-cloudwatch-agent"
 check "self-terminates" called "aws ec2 terminate-instances"
 
 echo "# activated spot instance whose cancel is denied -> stops instead of terminating"
