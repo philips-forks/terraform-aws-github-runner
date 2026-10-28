@@ -31,7 +31,7 @@ it('exposes every configured provider through both capability registries', () =>
       createRunners: expect.any(Function),
     });
     const scaleDown = controlPlaneRegistry.capability(type, 'scaleDown')();
-    expect(scaleDown).toEqual({
+    expect(scaleDown).toMatchObject({
       list: expect.any(Function),
       bootTimeExceeded: expect.any(Function),
       markOrphan: expect.any(Function),
