@@ -40,7 +40,13 @@ export function createEc2ScaleDownCapability(
       activatedSpotRequests = listing.activatedSpotRequests;
       return listing.runners;
     },
+    // The paged scan would skip the standby listing, so it is only offered without standby operations.
+    ...(!standbyOperations && ec2Operations.listPage
+      ? { listPage: (environment: string, nextToken?: string) => ec2Operations.listPage!(environment, nextToken) }
+      : {}),
     bootTimeExceeded,
+    setGitHubRunnerId: (id, githubRunnerId) =>
+      ec2Operations.tag(id, [{ Key: 'ghr:github_runner_id', Value: githubRunnerId }]),
     markOrphan: (id) => ec2Operations.tag(id, [{ Key: 'ghr:orphan', Value: 'true' }]),
     unmarkOrphan: (id) => ec2Operations.untag(id, [{ Key: 'ghr:orphan', Value: 'true' }]),
     markIdle: (id, at) => ec2Operations.tag(id, [{ Key: IDLE_DETECTED_TAG, Value: at }]),
